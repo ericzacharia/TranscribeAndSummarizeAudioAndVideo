@@ -22,7 +22,7 @@ def show_usage():
     """Show detailed usage information"""
     print("TranscribeAndSummarizeAudioAndVideo - Unified transcription and summarization tool")
     print("")
-    print("Usage: python run.py <input_file> [OPTIONS]")
+    print("Usage: python run.py <input_file_or_directory> [OPTIONS]")
     print("")
     print("Supported file types:")
     print("  Audio: .m4a, .wav, .mp3")
@@ -36,11 +36,15 @@ def show_usage():
     print("  --help, -h                     Show this help message")
     print("")
     print("Examples:")
+    print("  # Single file processing")
     print("  python run.py inputs/voice_memo.m4a                              # Default: medium.en + gpt-4o")
     print("  python run.py inputs/lecture.mp4 --style general --format md     # Custom style and format")
     print("  python run.py inputs/meeting.mp4 --summarization-model llama3.2:3b  # Use local Ollama model")
     print("  python run.py inputs/interview.m4a --transcription-model large-v3    # High quality transcription")
-    print("  python run.py inputs/presentation.mp4 --summarization-model gpt-4o   # Use GPT-4o for summary")
+    print("")
+    print("  # Directory batch processing")
+    print("  python run.py inputs/2025-07-15/                                 # Process all files in directory")
+    print("  python run.py inputs/ --style meeting --format pdf               # Batch process with custom options")
     print("")
     print("Output locations:")
     print("  Audio files: ./inputs/")
@@ -519,6 +523,50 @@ def determine_ai_provider(model_name=None):
     print("✅ Using Ollama with default model: llama3.2:1b")
     return "ollama", "llama3.2:1b"
 
+def process_single_file(input_file, args, whisper_path, ai_provider, ai_model):
+    """Process a single audio/video file"""
+    # Get file info
+    input_filename = input_file.name
+    input_extension = validate_file_extension(input_filename)
+    input_basename = input_file.stem
+    
+    print(f"\n🎵 Processing {input_extension} file: {input_filename}")
+    
+    # Create timestamped output directory for this file
+    output_dir = create_output_directory()
+    processing_start_time = datetime.now()
+    
+    print(f"  Session output: {output_dir.relative_to(SCRIPT_DIR)}")
+    
+    # Copy input file to inputs if needed
+    copy_input_file(input_file)
+    
+    # Step 1: Convert to WAV format
+    wav_file_path = convert_to_wav(input_file, input_extension, input_basename, output_dir)
+    
+    # Step 2: Transcribe using Whisper
+    txt_output_path, clean_basename = transcribe_audio(wav_file_path, whisper_path, args.transcription_model, input_basename, output_dir)
+    
+    # Step 3: Generate summary
+    generate_summary(txt_output_path, clean_basename, args.style, args.format, ai_provider, ai_model, output_dir)
+    
+    # Create session metadata file
+    metadata_file = create_session_metadata(output_dir, input_file, args, ai_provider, ai_model, processing_start_time)
+    
+    print(f"✅ Completed processing: {input_filename}")
+    return output_dir
+
+def find_audio_files(directory_path):
+    """Find all supported audio/video files in a directory"""
+    supported_extensions = ['.m4a', '.wav', '.mp3', '.mp4', '.mov']
+    audio_files = []
+    
+    for ext in supported_extensions:
+        audio_files.extend(directory_path.glob(f"**/*{ext}"))
+    
+    # Sort by name for consistent processing order
+    return sorted(audio_files)
+
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(
@@ -526,7 +574,7 @@ def main():
         add_help=False
     )
     
-    parser.add_argument('input_file', nargs='?', help='Input audio/video file')
+    parser.add_argument('input_file', nargs='?', help='Input audio/video file or directory')
     parser.add_argument('--transcription-model', default='medium.en', help='Whisper model for transcription (default: medium.en)')
     parser.add_argument('--summarization-model', default='', help='AI model for summarization (default: gpt-4o-mini)')
     parser.add_argument('--style', default='general', help='Summary style: general, meeting (default: general)')
@@ -540,18 +588,26 @@ def main():
         show_usage()
         sys.exit(0 if args.help else 1)
     
-    # Validate input file exists
-    input_file = Path(args.input_file)
-    if not input_file.exists():
-        print(f"Error: Input file '{input_file}' not found")
+    # Validate input path exists
+    input_path = Path(args.input_file)
+    if not input_path.exists():
+        print(f"Error: Input path '{input_path}' not found")
         sys.exit(1)
     
-    # Get file info
-    input_filename = input_file.name
-    input_extension = validate_file_extension(input_filename)
-    input_basename = input_file.stem
-    
-    print(f"Processing {input_extension} file: {input_filename}")
+    # Determine if input is file or directory
+    if input_path.is_file():
+        # Single file processing (existing behavior)
+        files_to_process = [input_path]
+    elif input_path.is_dir():
+        # Directory processing (new functionality)
+        files_to_process = find_audio_files(input_path)
+        if not files_to_process:
+            print(f"Error: No supported audio/video files found in directory '{input_path}'")
+            print("Supported formats: .m4a, .wav, .mp3, .mp4, .mov")
+            sys.exit(1)
+    else:
+        print(f"Error: Input path '{input_path}' is neither a file nor a directory")
+        sys.exit(1)
     
     # Validate arguments
     validate_summary_style(args.style)
@@ -563,10 +619,18 @@ def main():
     # Determine best AI provider with smart fallback
     ai_provider, ai_model = determine_ai_provider(args.summarization_model or None)
     
-    # Show configuration with defaults clearly marked
+    # Show configuration
+    if len(files_to_process) == 1:
+        input_filename = files_to_process[0].name
+        input_extension = validate_file_extension(input_filename)
+        print(f"Processing {input_extension} file: {input_filename}")
+    else:
+        print(f"\n📁 Processing directory: {input_path}")
+        print(f"Found {len(files_to_process)} audio/video files to process")
+        for i, file in enumerate(files_to_process, 1):
+            print(f"  {i}. {file.name}")
+    
     print("\n📋 Configuration:")
-    print(f"  Input file: {input_file}")
-    print(f"  File type: {input_extension}")
     
     # Show transcription model with default indicator
     transcription_default = " (default)" if args.transcription_model == "medium.en" else ""
@@ -587,38 +651,43 @@ def main():
     print(f"  Model weights storage: {SCRIPT_DIR}/models/")
     print()
     
-    # Create base directories and timestamped output directory
+    # Create base directories
     create_directories()
-    output_dir = create_output_directory()
-    processing_start_time = datetime.now()
     
-    print(f"  Session output: {output_dir.relative_to(SCRIPT_DIR)}")
-    print()
+    # Process all files
+    completed_sessions = []
+    for i, file in enumerate(files_to_process, 1):
+        if len(files_to_process) > 1:
+            print(f"\n{'='*60}")
+            print(f"Processing file {i}/{len(files_to_process)}")
+            print(f"{'='*60}")
+        
+        try:
+            session_dir = process_single_file(file, args, whisper_path, ai_provider, ai_model)
+            completed_sessions.append((file.name, session_dir))
+        except Exception as e:
+            print(f"❌ Error processing {file.name}: {e}")
+            continue
     
-    # Copy input file to inputs if needed
-    copy_input_file(input_file)
-    
-    # Step 1: Convert to WAV format
-    wav_file_path = convert_to_wav(input_file, input_extension, input_basename, output_dir)
-    
-    # Step 2: Transcribe using Whisper
-    txt_output_path, clean_basename = transcribe_audio(wav_file_path, whisper_path, args.transcription_model, input_basename, output_dir)
-    
-    # Step 3: Generate summary
-    generate_summary(txt_output_path, clean_basename, args.style, args.format, ai_provider, ai_model, output_dir)
-    
-    # Create session metadata file
-    metadata_file = create_session_metadata(output_dir, input_file, args, ai_provider, ai_model, processing_start_time)
-    
-    # Show completion message
-    print("\n🎉 All processing completed successfully!")
-    print("\nOutput files in session folder:")
-    print(f"  📄 Transcript: {clean_basename}_transcript.txt")
-    print(f"  ⏰ Timestamps: {clean_basename}_transcript.vtt")
-    print(f"  📋 Summary: {clean_basename}_summary.{args.format}")
-    print(f"  🎵 Audio: {input_basename}.wav")
-    print(f"  📊 Metadata: session_metadata.json")
-    print(f"\nSession folder: {output_dir.relative_to(SCRIPT_DIR)}")
+    # Show completion summary
+    if len(files_to_process) == 1:
+        print("\n🎉 Processing completed successfully!")
+        if completed_sessions:
+            file_name, session_dir = completed_sessions[0]
+            clean_basename = Path(file_name).stem
+            print("\nOutput files in session folder:")
+            print(f"  📄 Transcript: {clean_basename}_transcript.txt")
+            print(f"  ⏰ Timestamps: {clean_basename}_transcript.vtt")
+            print(f"  📋 Summary: {clean_basename}_summary.{args.format}")
+            print(f"  🎵 Audio: {clean_basename}.wav")
+            print(f"  📊 Metadata: session_metadata.json")
+            print(f"\nSession folder: {session_dir.relative_to(SCRIPT_DIR)}")
+    else:
+        print(f"\n🎉 Batch processing completed!")
+        print(f"Successfully processed {len(completed_sessions)}/{len(files_to_process)} files")
+        print("\nSession folders created:")
+        for file_name, session_dir in completed_sessions:
+            print(f"  📁 {file_name} → {session_dir.relative_to(SCRIPT_DIR)}")
     print()
 
 if __name__ == "__main__":

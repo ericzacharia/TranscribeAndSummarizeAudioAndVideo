@@ -11,15 +11,15 @@ git clone git@github.com:ericzacharia/TranscribeAndSummarizeAudioAndVideo.git
 cd TranscribeAndSummarizeAudioAndVideo
 
 # Option 1: Conda (Recommended)
-conda env create -f environment.yml
+conda env create -f setup/environment.yml
 conda activate TranscribeAndSummarizeAudioAndVideo
 
 # Option 2: pip
 python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+pip install -r setup/requirements.txt
 
 # Setup whisper.cpp and configure
-python setup.py
+python setup/setup.py
 
 # Configure OpenAI (default)
 cp .env.template .env
@@ -33,18 +33,23 @@ ollama pull llama3.1
 
 ### Command Line
 ```bash
-# Basic transcription and summarization (uses OpenAI by default)
+# Single file processing
 python run.py input_file.m4a
 python run.py input_video.mp4
+
+# Directory batch processing (process all audio/video files)
+python run.py inputs/2025-07-15/
+python run.py inputs/ --style meeting --format pdf
 
 # Custom summary styles and formats
 python run.py input_video.mp4 --style meeting --format md
 
 # Use local Ollama instead of OpenAI
-python run.py input_file.m4a --model ollama
+python run.py input_file.m4a --summarization-model llama3.2:1b
 
-# Options: --style [general|meeting], --whisper-model [tiny|base|small|medium|large], 
-#          --format [txt|md|pdf], --model [ollama|openai], --ai-model [model_name]
+# Options: --transcription-model [tiny|base|small|medium|medium.en|large-v3], 
+#          --summarization-model [gpt-4o|gpt-4o-mini|llama3.2:1b|llama3.2:3b|llama3.1:8b], 
+#          --style [general|meeting], --format [txt|md|pdf]
 ```
 
 ### Streamlit Web App
@@ -64,24 +69,59 @@ streamlit run src/app.py
 ## Examples
 
 ```bash
-# iPhone voice memo (transcribes and summarizes with OpenAI by default)
-python run.py "Meeting Notes.m4a"
+# Single file processing
+python run.py "Meeting Notes.m4a"                                    # iPhone voice memo with defaults
+python run.py "Team_Meeting.mp4" --style meeting                     # Zoom recording with meeting format
+python run.py "Lecture.mp4" --transcription-model large-v3           # High quality transcription
+python run.py "Audio File.m4a" --summarization-model gpt-4o          # Custom OpenAI model
 
-# Zoom recording with meeting-style summary
-python run.py "Team_Meeting.mp4" --style meeting
+# Directory batch processing
+python run.py inputs/2025-07-15/                                     # Process all files in date folder
+python run.py recordings/ --style meeting --format pdf               # Meeting transcripts as PDFs
+python run.py interviews/ --transcription-model large-v3 --format md # High quality batch processing
+```
 
-# Lecture with best quality using Ollama
-python run.py "Lecture.mp4" --whisper-model large --model ollama --ai-model llama3.1
+## Utilities
 
-# Use custom OpenAI model
-python run.py "Audio File.m4a" --ai-model gpt-4
+### Audio/Video File Merging
+Use `merge_media.py` to merge multiple audio/video recordings (requires ffmpeg):
+
+**Features:**
+- Merges multiple files (not just 2)
+- Auto-detects segment files by base name
+- Supports audio (.m4a, .wav, .mp3) and video (.mp4, .mov) files
+- Intelligent file naming (removes segment indicators like (1-2), (2-2))
+- Organizes original segments into `<basename>_segments/` folder
+- Clean output filenames without segment indicators
+
+```bash
+# Install ffmpeg first (one-time setup)
+sudo apt install ffmpeg
+
+# Auto-detect and merge segments by base name
+python merge_media.py "Hunt Working Session 7.15"
+python merge_media.py "Meeting Recording" -d inputs/2025-07-15/
+
+# Manual file specification
+python merge_media.py file1.m4a file2.m4a file3.m4a
+python merge_media.py file1.mp4 file2.mp4 -o merged_video.mp4
+
+# Dry run to see what would be merged
+python merge_media.py "Recording" --dry-run
+```
+
+**Example workflow:**
+```bash
+# Before: Hunt Working Session 7.15 (1-2).m4a, Hunt Working Session 7.15 (2-2).m4a
+python merge_media.py "Hunt Working Session 7.15"
+# After: Hunt Working Session 7.15.m4a + Hunt Working Session 7.15_segments/ folder
 ```
 
 ## Troubleshooting
 
 - **Missing OpenAI key**: Configure OpenAI key in `.env` or use `--model ollama`
 - **Ollama not running**: Start with `ollama serve` or use default OpenAI
-- **Whisper model not found**: Run `./setup.sh` to download models
+- **Whisper model not found**: Run `python setup/setup.py` to download models
 - **FFmpeg missing**: Install FFmpeg for video processing
 - **Large files**: Use smaller models (tiny/base) for faster processing
 
