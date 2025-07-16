@@ -25,10 +25,8 @@ def find_ffmpeg():
     if local_ffmpeg.exists():
         return str(local_ffmpeg.resolve())
     
-    print("Error: ffmpeg not found. Please install ffmpeg:")
-    print("  sudo apt install ffmpeg")
-    print("  # or download from https://ffmpeg.org/")
-    sys.exit(1)
+    # Raise exception instead of sys.exit for better module compatibility
+    raise FileNotFoundError("ffmpeg not found. Please install ffmpeg: sudo apt install ffmpeg")
 
 def extract_base_name(filename):
     """Extract base name by removing segment indicators"""
@@ -101,7 +99,11 @@ def merge_files(input_files, output_file):
         shutil.copy2(input_files[0], output_file)
         return True
     
-    ffmpeg = find_ffmpeg()
+    try:
+        ffmpeg = find_ffmpeg()
+    except FileNotFoundError as e:
+        print(f"❌ Error: {e}")
+        return False
     
     # Create temporary file list for ffmpeg concat
     temp_list = Path("temp_file_list.txt")
@@ -181,6 +183,36 @@ def organize_segments(segment_files, base_name):
             print(f"⚠️  Warning: Could not move {file_path.name}: {e}")
     
     return segments_dir if moved_files else None
+
+def find_all_audio_video_files(directory="."):
+    """Find all audio/video files in directory and group by base name"""
+    directory = Path(directory)
+    supported_extensions = ['.m4a', '.wav', '.mp3', '.mp4', '.mov']
+    
+    # Find all audio/video files
+    all_files = []
+    for ext in supported_extensions:
+        all_files.extend(directory.glob(f"*{ext}"))
+    
+    # Group by base name
+    groups = {}
+    for file_path in all_files:
+        base_name = extract_base_name(file_path.name)
+        if base_name not in groups:
+            groups[base_name] = []
+        groups[base_name].append(file_path)
+    
+    # Filter out single files (no segments to merge)
+    segment_groups = {}
+    for base_name, files in groups.items():
+        if len(files) > 1:
+            # Sort files naturally
+            def natural_sort_key(path):
+                parts = re.split(r'(\d+)', str(path))
+                return [int(part) if part.isdigit() else part for part in parts]
+            segment_groups[base_name] = sorted(files, key=natural_sort_key)
+    
+    return segment_groups
 
 def auto_detect_and_merge(base_pattern, directory="."):
     """Auto-detect segment files and merge them"""
@@ -273,7 +305,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Auto-detect segments by base name
+  # Auto-detect directory and process all segment files
+  python merge_media.py inputs/2025-07-15/
+  
+  # Auto-detect segments by base name  
   python merge_media.py "Hunt Working Session 7.15"
   
   # Manual file specification
@@ -282,26 +317,76 @@ Examples:
   # Specify output file
   python merge_media.py file1.m4a file2.m4a -o merged.m4a
   
-  # Process files in different directory
-  python merge_media.py "Meeting" -d inputs/2025-07-15/
+  # Dry run to see what would be processed
+  python merge_media.py inputs/2025-07-15/ --dry-run
 
 Supported formats: .m4a, .wav, .mp3, .mp4, .mov
         """
     )
     
-    parser.add_argument('files', nargs='+', 
-                       help='Base name for auto-detection or list of files to merge')
+    parser.add_argument('input', nargs='?', 
+                       help='Directory, base name for auto-detection, or first file to merge')
+    parser.add_argument('files', nargs='*', 
+                       help='Additional files to merge (for manual specification)')
     parser.add_argument('-o', '--output', 
                        help='Output file name (auto-generated if not specified)')
-    parser.add_argument('-d', '--directory', default='.', 
-                       help='Directory to search for files (default: current)')
+    parser.add_argument('-d', '--directory', 
+                       help='Explicitly specify directory to search (overrides auto-detection)')
     parser.add_argument('--dry-run', action='store_true',
                        help='Show what would be done without actually doing it')
     
     args = parser.parse_args()
     
+    # Auto-detect input type if no explicit directory flag
+    if args.input and not args.directory:
+        input_path = Path(args.input)
+        if input_path.exists() and input_path.is_dir():
+            # Input is a directory - process all segment files in it
+            args.directory = str(input_path)
+            args.files = []  # Clear files list for directory mode
+        elif not input_path.exists() or input_path.is_file():
+            # Input is a base name for auto-detection or a file
+            all_files = [args.input] + args.files if args.files else [args.input]
+            args.files = all_files
+            args.directory = args.directory or '.'
+    elif not args.input:
+        # No input specified - default to current directory
+        args.directory = args.directory or '.'
+        args.files = []
+    
+    # If no files specified or directory mode, process all files in directory
+    if not args.files:
+        print(f"🔍 Searching for audio/video files in: {args.directory}")
+        segment_groups = find_all_audio_video_files(args.directory)
+        
+        if not segment_groups:
+            print("❌ No segment files found to merge")
+            print("   Directory contains no files with multiple segments")
+            sys.exit(1)
+        
+        print(f"📋 Found {len(segment_groups)} file group(s) to merge:")
+        for base_name, files in segment_groups.items():
+            print(f"  • {base_name} ({len(files)} segments)")
+        
+        if args.dry_run:
+            print("\n🧪 DRY RUN - No files will be modified")
+            for base_name, files in segment_groups.items():
+                print(f"\nWould merge '{base_name}':")
+                for f in files:
+                    print(f"  - {f.name}")
+        else:
+            success_count = 0
+            for base_name, files in segment_groups.items():
+                print(f"\n🔄 Processing: {base_name}")
+                # Use manual merge since we already have the file list
+                if manual_merge([str(f) for f in files]):
+                    success_count += 1
+            
+            print(f"\n✅ Successfully merged {success_count}/{len(segment_groups)} file groups")
+            sys.exit(0 if success_count == len(segment_groups) else 1)
+    
     # If only one argument and it doesn't exist as a file, assume it's a base name for auto-detection
-    if len(args.files) == 1 and not Path(args.files[0]).exists():
+    elif len(args.files) == 1 and not Path(args.files[0]).exists():
         # Auto-detection mode
         base_pattern = args.files[0]
         if args.dry_run:

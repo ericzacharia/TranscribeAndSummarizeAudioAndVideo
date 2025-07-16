@@ -10,13 +10,8 @@ A tool that automatically transcribes and summarizes audio/video files using loc
 git clone git@github.com:ericzacharia/TranscribeAndSummarizeAudioAndVideo.git
 cd TranscribeAndSummarizeAudioAndVideo
 
-# Option 1: Conda (Recommended)
-conda env create -f setup/environment.yml
-conda activate TranscribeAndSummarizeAudioAndVideo
-
-# Option 2: pip
-python -m venv venv && source venv/bin/activate
-pip install -r setup/requirements.txt
+# Install dependencies (Linux/WSL)
+pip install --user --break-system-packages -r setup/requirements.txt
 
 # Setup whisper.cpp and configure
 python setup/setup.py
@@ -26,8 +21,30 @@ cp .env.template .env
 # Edit .env with your OpenAI API key
 
 # OR install Ollama for local AI (alternative)
-ollama pull llama3.1
+curl -fsSL https://ollama.com/install.sh | sh
 ```
+
+### Ollama Setup for Local AI (WSL/Linux)
+If using local Ollama models instead of OpenAI:
+
+```bash
+# Start Ollama server (required before each use)
+ollama serve &
+
+# Pull your desired model (one-time setup)
+ollama pull llama3.2:3b
+
+# Now you can use local models
+python run.py input.m4a --summarization-model llama3.2:3b
+```
+
+**Ollama Management Tips:**
+- **Start when needed**: `ollama serve &` (runs in background)
+- **Check if running**: `ps aux | grep ollama`
+- **Stop when done**: `pkill ollama`
+- **Convenient alias**: Add to `.bashrc`: `alias start-transcribe="ollama serve & sleep 2 && echo 'Ollama ready'"`
+
+**Note**: In WSL, Ollama doesn't auto-start. You'll need to manually start it before using local models.
 
 ## Usage
 
@@ -75,55 +92,86 @@ python run.py "Team_Meeting.mp4" --style meeting                     # Zoom reco
 python run.py "Lecture.mp4" --transcription-model large-v3           # High quality transcription
 python run.py "Audio File.m4a" --summarization-model gpt-4o          # Custom OpenAI model
 
-# Directory batch processing
-python run.py inputs/2025-07-15/                                     # Process all files in date folder
-python run.py recordings/ --style meeting --format pdf               # Meeting transcripts as PDFs
-python run.py interviews/ --transcription-model large-v3 --format md # High quality batch processing
+# Directory batch processing with automatic segment merging
+python run.py inputs/2025-07-15/                                     # Auto-detects and merges segments, then processes all files
+python run.py recordings/ --style meeting --format pdf               # Meeting transcripts as PDFs with automatic merging
+python run.py interviews/ --transcription-model large-v3 --format md # High quality batch processing with smart segment handling
 ```
+
+## Intelligent Segment Detection and Merging
+
+The system automatically detects and merges segment files when processing directories, eliminating the need for manual merging:
+
+**How it works:**
+- When you point to a directory, the system first scans for segment files
+- Automatically detects patterns like `(1-2)`, `(2-2)`, `_part1`, `_part2`, etc.
+- Merges segments into clean files with organized storage
+- Proceeds with transcription of merged and individual files
+
+**Example workflow:**
+```bash
+# Directory contains: "Hunt Session 7.15 (1-2).m4a", "Hunt Session 7.15 (2-2).m4a", "meeting.mp4"
+python run.py inputs/2025-07-15/
+
+# System automatically:
+# 1. ✅ Detects: "Hunt Session 7.15" has 2 segments  
+# 2. 🔄 Merges: Creates "Hunt Session 7.15.m4a"
+# 3. 📁 Organizes: Moves segments to "Hunt Session 7.15_segments/" folder
+# 4. 📄 Processes: Both merged file and "meeting.mp4" for transcription
+```
+
+**Benefits:**
+- **Seamless workflow**: No manual merging required
+- **Smart detection**: Handles various segment naming patterns
+- **Clean organization**: Original segments safely stored in subfolders
+- **Flexible**: Works with any directory structure
 
 ## Utilities
 
-### Audio/Video File Merging
-Use `merge_media.py` to merge multiple audio/video recordings (requires ffmpeg):
+### Manual Audio/Video File Merging
+Use `src/merge_media.py` for standalone merging (requires ffmpeg):
 
 **Features:**
-- Merges multiple files (not just 2)
-- Auto-detects segment files by base name
+- Auto-detects if input is directory or file/base name
+- Merges multiple files with intelligent naming
 - Supports audio (.m4a, .wav, .mp3) and video (.mp4, .mov) files
-- Intelligent file naming (removes segment indicators like (1-2), (2-2))
 - Organizes original segments into `<basename>_segments/` folder
-- Clean output filenames without segment indicators
+- Optimized for inputs/date/ folder structure
 
 ```bash
 # Install ffmpeg first (one-time setup)
 sudo apt install ffmpeg
 
-# Auto-detect and merge segments by base name
-python merge_media.py "Hunt Working Session 7.15"
-python merge_media.py "Meeting Recording" -d inputs/2025-07-15/
+# Auto-detect directory and merge all segment files
+python src/merge_media.py inputs/2025-07-15/
+
+# Auto-detect segments by base name
+python src/merge_media.py "Hunt Working Session 7.15"
 
 # Manual file specification
-python merge_media.py file1.m4a file2.m4a file3.m4a
-python merge_media.py file1.mp4 file2.mp4 -o merged_video.mp4
+python src/merge_media.py file1.m4a file2.m4a file3.m4a
 
 # Dry run to see what would be merged
-python merge_media.py "Recording" --dry-run
+python src/merge_media.py inputs/2025-07-15/ --dry-run
 ```
 
-**Example workflow:**
-```bash
-# Before: Hunt Working Session 7.15 (1-2).m4a, Hunt Working Session 7.15 (2-2).m4a
-python merge_media.py "Hunt Working Session 7.15"
-# After: Hunt Working Session 7.15.m4a + Hunt Working Session 7.15_segments/ folder
-```
+**Note:** Manual merging is rarely needed since `run.py` automatically handles segment detection and merging.
 
 ## Troubleshooting
 
-- **Missing OpenAI key**: Configure OpenAI key in `.env` or use `--model ollama`
-- **Ollama not running**: Start with `ollama serve` or use default OpenAI
-- **Whisper model not found**: Run `python setup/setup.py` to download models
-- **FFmpeg missing**: Install FFmpeg for video processing
-- **Large files**: Use smaller models (tiny/base) for faster processing
+### Common Issues
+- **Missing OpenAI key**: Configure OpenAI key in `.env` or use local Ollama models
+- **"Ollama not available"**: Start Ollama with `ollama serve &` before running with `--summarization-model llama3.2:3b`
+- **"whisper.cpp not found"**: Run `python setup/setup.py` or manually build whisper.cpp
+- **"No module named 'pydub'"**: Install dependencies with `pip install --user --break-system-packages -r setup/requirements.txt`
+- **FFmpeg errors**: Install FFmpeg with `sudo apt install ffmpeg`
+- **Large files timeout**: Use smaller transcription models (`--transcription-model tiny`) for faster processing
+- **Memory issues**: Close other applications or use smaller models
+
+### WSL/Linux Specific
+- **Systemd warnings**: Normal in WSL, Ollama still works with manual start
+- **Permission errors**: Use `--user` flag with pip or check file permissions
+- **Audio conversion fails**: Ensure FFmpeg is installed and accessible
 
 ## License
 

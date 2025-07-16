@@ -18,6 +18,9 @@ from datetime import datetime
 # Get the directory where this script is located
 SCRIPT_DIR = Path(__file__).parent.absolute()
 
+# Import merge functionality
+from src.merge_media import find_all_audio_video_files, merge_files, organize_segments, extract_base_name
+
 def show_usage():
     """Show detailed usage information"""
     print("TranscribeAndSummarizeAudioAndVideo - Unified transcription and summarization tool")
@@ -82,16 +85,14 @@ def validate_output_format(format_type):
 
 def find_whisper_path():
     """Find whisper.cpp installation path"""
-    # Check local first, then external
+    # Check local installation
     local_path = SCRIPT_DIR / "whisper.cpp"
-    external_path = Path("/Users/eric/Desktop/2-Career/Projects/whisper.cpp")
     
-    if local_path.exists() and (local_path / "main").exists():
+    if local_path.exists() and (local_path / "build" / "bin" / "whisper-cli").exists():
         return local_path
-    elif external_path.exists() and (external_path / "main").exists():
-        return external_path
     else:
-        print("Error: whisper.cpp not found. Please run ./setup.sh first.")
+        print("Error: whisper.cpp not found. Please run the setup script:")
+        print("  python setup/setup.py")
         sys.exit(1)
 
 def create_output_directory():
@@ -323,7 +324,7 @@ def transcribe_audio(wav_file_path, whisper_path, model_name, basename, output_d
     
     # Run whisper transcription with both text and timestamped output
     cmd = [
-        str(whisper_path / "main"),
+        str(whisper_path / "build" / "bin" / "whisper-cli"),
         "-m", str(model_file),
         "-f", str(wav_file_path),
         "-of", str(output_dir / clean_basename),
@@ -567,6 +568,57 @@ def find_audio_files(directory_path):
     # Sort by name for consistent processing order
     return sorted(audio_files)
 
+def detect_and_merge_segments(directory_path):
+    """Detect and merge segment files in a directory before processing"""
+    print(f"🔍 Checking for segment files in: {directory_path}")
+    
+    try:
+        # Find all segment groups in the directory
+        segment_groups = find_all_audio_video_files(str(directory_path))
+        
+        if not segment_groups:
+            print("  ✅ No segment files detected - proceeding with individual files")
+            return []
+        
+        print(f"  📋 Found {len(segment_groups)} file group(s) with segments:")
+        for base_name, files in segment_groups.items():
+            print(f"    • {base_name} ({len(files)} segments)")
+        
+        merged_files = []
+        success_count = 0
+        
+        for base_name, files in segment_groups.items():
+            print(f"\n  🔄 Merging: {base_name}")
+            
+            # Determine output file path and extension
+            first_file = files[0]
+            output_extension = first_file.suffix
+            output_file = directory_path / f"{base_name}{output_extension}"
+            
+            # Merge the files
+            if merge_files([str(f) for f in files], str(output_file)):
+                print(f"    ✅ Successfully merged into: {output_file.name}")
+                merged_files.append(output_file)
+                success_count += 1
+                
+                # Organize segments into folder
+                segments_dir = organize_segments(files, base_name)
+                if segments_dir:
+                    print(f"    📁 Segments organized in: {segments_dir.name}/")
+            else:
+                print(f"    ❌ Failed to merge {base_name}")
+        
+        if merged_files:
+            print(f"\n  🎉 Successfully merged {success_count}/{len(segment_groups)} file groups")
+            print(f"  📄 Created {len(merged_files)} merged files for processing")
+        
+        return merged_files
+        
+    except Exception as e:
+        print(f"  ⚠️  Error during segment detection: {e}")
+        print("  ✅ Proceeding with individual files")
+        return []
+
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(
@@ -599,12 +651,24 @@ def main():
         # Single file processing (existing behavior)
         files_to_process = [input_path]
     elif input_path.is_dir():
-        # Directory processing (new functionality)
+        # Directory processing with intelligent segment detection and merging
+        print(f"\n📁 Processing directory: {input_path}")
+        
+        # Step 1: Detect and merge segment files automatically
+        merged_files = detect_and_merge_segments(input_path)
+        
+        # Step 2: Find all audio/video files (including newly merged ones)
         files_to_process = find_audio_files(input_path)
         if not files_to_process:
             print(f"Error: No supported audio/video files found in directory '{input_path}'")
             print("Supported formats: .m4a, .wav, .mp3, .mp4, .mov")
             sys.exit(1)
+        
+        # Show what will be processed
+        if merged_files:
+            print(f"\n📄 Found {len(files_to_process)} total files for processing (including {len(merged_files)} merged files)")
+        else:
+            print(f"\n📄 Found {len(files_to_process)} files for processing")
     else:
         print(f"Error: Input path '{input_path}' is neither a file nor a directory")
         sys.exit(1)

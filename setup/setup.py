@@ -128,11 +128,100 @@ def check_whisper_cpp():
         return True
     else:
         print("❌ Whisper.cpp not found")
-        print("   Option 1: Download prebuilt binary from https://github.com/ggerganov/whisper.cpp")
-        print("   Option 2: Build from source (see whisper.cpp documentation)")
+        print("   The setup script can automatically install it for you")
+        print("   Or install manually:")
+        print("     - Download prebuilt: https://github.com/ggerganov/whisper.cpp/releases")
+        print("     - Build from source: https://github.com/ggerganov/whisper.cpp")
         if external_whisper:
-            print(f"   Option 3: Copy existing installation:")
-            print(f"     cp -r {external_whisper.parent} ./whisper.cpp")
+            print(f"     - Copy existing: cp -r {external_whisper.parent} ./whisper.cpp")
+        return False
+
+def install_whisper_cpp():
+    """Download and install whisper.cpp"""
+    print("\n🔄 Installing whisper.cpp...")
+    
+    try:
+        import urllib.request
+        import tarfile
+        import zipfile
+        
+        # Determine the appropriate binary for the platform
+        system = platform.system()
+        machine = platform.machine().lower()
+        
+        if system == "Linux" and machine in ["x86_64", "amd64"]:
+            # Download prebuilt Linux binary
+            url = "https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper.cpp-v1.5.4-bin-x64.zip"
+            filename = "whisper.cpp-bin-x64.zip"
+            extract_func = zipfile.ZipFile
+        elif system == "Darwin":
+            # Download prebuilt macOS binary
+            url = "https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper.cpp-v1.5.4-bin-macos.zip"
+            filename = "whisper.cpp-bin-macos.zip"
+            extract_func = zipfile.ZipFile
+        elif system == "Windows":
+            # Download prebuilt Windows binary
+            url = "https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper.cpp-v1.5.4-bin-win64.zip"
+            filename = "whisper.cpp-bin-win64.zip"
+            extract_func = zipfile.ZipFile
+        else:
+            print(f"❌ No prebuilt binary available for {system} {machine}")
+            print("   Please build from source: https://github.com/ggerganov/whisper.cpp")
+            return False
+        
+        print(f"   Downloading {filename}...")
+        urllib.request.urlretrieve(url, filename)
+        
+        print("   Extracting...")
+        whisper_dir = Path("./whisper.cpp")
+        whisper_dir.mkdir(exist_ok=True)
+        
+        with extract_func(filename, 'r') as archive:
+            # Extract all files to whisper.cpp directory
+            archive.extractall(whisper_dir)
+            
+        # Find the main executable in the extracted files
+        main_exe = None
+        for ext in ['', '.exe']:
+            potential_paths = [
+                whisper_dir / f"main{ext}",
+                whisper_dir / f"whisper.cpp-*/main{ext}",
+            ]
+            for pattern in potential_paths:
+                matches = list(whisper_dir.glob(str(pattern).replace(str(whisper_dir) + "/", "")))
+                if matches:
+                    main_exe = matches[0]
+                    break
+            if main_exe:
+                break
+        
+        # If extracted into a subdirectory, move files up
+        subdirs = [d for d in whisper_dir.iterdir() if d.is_dir()]
+        if subdirs and not main_exe:
+            subdir = subdirs[0]
+            for item in subdir.iterdir():
+                item.rename(whisper_dir / item.name)
+            subdir.rmdir()
+            main_exe = whisper_dir / ("main.exe" if system == "Windows" else "main")
+        
+        # Make executable on Unix systems
+        if main_exe and system != "Windows":
+            main_exe.chmod(main_exe.stat().st_mode | 0o755)
+        
+        # Clean up download
+        Path(filename).unlink()
+        
+        if main_exe and main_exe.exists():
+            print("✅ whisper.cpp installed successfully!")
+            print(f"   Executable: {main_exe}")
+            return True
+        else:
+            print("❌ Installation failed - main executable not found")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Installation failed: {e}")
+        print("   Please install manually: https://github.com/ggerganov/whisper.cpp")
         return False
 
 def check_ollama():
@@ -161,8 +250,8 @@ def print_next_steps():
     if 'CONDA_DEFAULT_ENV' in os.environ:
         print("   Dependencies should already be installed via conda")
     else:
-        print("   pip install -r requirements.txt")
-        print("   OR use conda: conda env create -f environment.yml")
+        print("   pip install -r setup/requirements.txt")
+        print("   OR use conda: conda env create -f setup/environment.yml")
     
     print()
     print("🔑 Configure API keys:")
@@ -209,10 +298,29 @@ def main():
     print(f"   Whisper.cpp: {'✅' if whisper_ok else '❌'}")
     print(f"   Ollama: {'✅' if ollama_ok else '⚠️ '} (optional)")
     
+    # Handle missing dependencies
     if not ffmpeg_ok or not whisper_ok:
         print()
         print("⚠️  Some required dependencies are missing.")
-        print("   Please install them before using the tool.")
+        
+        # Offer to install whisper.cpp automatically
+        if not whisper_ok:
+            print()
+            response = input("Would you like to automatically install whisper.cpp? (y/n): ").lower().strip()
+            if response in ['y', 'yes']:
+                whisper_installed = install_whisper_cpp()
+                if whisper_installed:
+                    whisper_ok = True
+                    print()
+                    print("📋 Updated Dependency Summary:")
+                    print(f"   Python: {'✅' if python_ok else '❌'}")
+                    print(f"   FFmpeg: {'✅' if ffmpeg_ok else '❌'}")
+                    print(f"   Whisper.cpp: {'✅' if whisper_ok else '❌'}")
+                    print(f"   Ollama: {'✅' if ollama_ok else '⚠️ '} (optional)")
+        
+        if not ffmpeg_ok or not whisper_ok:
+            print()
+            print("⚠️  Please install remaining dependencies before using the tool.")
     
     # Next steps
     print_next_steps()
