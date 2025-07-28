@@ -268,11 +268,12 @@ def download_youtube_audio(url):
         print("   pip install yt-dlp")
         sys.exit(1)
     
-    # Create inputs directory if it doesn't exist
-    inputs_dir = SCRIPT_DIR / "inputs"
-    inputs_dir.mkdir(exist_ok=True)
+    # Create dated inputs directory for today
+    today = datetime.today().strftime('%Y-%m-%d')
+    inputs_dir = SCRIPT_DIR / "inputs" / today
+    inputs_dir.mkdir(parents=True, exist_ok=True)
     
-    # Download audio to inputs directory
+    # Download audio to dated inputs directory
     output_template = str(inputs_dir / "%(title)s-%(id)s.%(ext)s")
     
     try:
@@ -330,6 +331,29 @@ def create_directories():
     (SCRIPT_DIR / "models").mkdir(exist_ok=True)
     (SCRIPT_DIR / "models" / "whisper").mkdir(exist_ok=True)
     (SCRIPT_DIR / "models" / "ollama").mkdir(exist_ok=True)
+
+def organize_input_file(input_file):
+    """Organize input file into dated folder if it's directly in inputs/ directory"""
+    input_path = Path(input_file)
+    inputs_dir = SCRIPT_DIR / "inputs"
+    
+    # Check if file is directly in inputs/ directory (not in a subfolder)
+    if input_path.parent == inputs_dir:
+        # Create today's dated folder
+        today = datetime.today().strftime('%Y-%m-%d')
+        dated_dir = inputs_dir / today
+        dated_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Move file to dated folder
+        organized_path = dated_dir / input_path.name
+        if not organized_path.exists():
+            shutil.move(str(input_path), str(organized_path))
+            print(f"📁 Organized file into dated folder: {organized_path.relative_to(SCRIPT_DIR)}")
+        
+        return organized_path
+    
+    # File is already organized or not in inputs/ directory
+    return input_path
 
 def copy_input_file(input_file):
     """Copy input file to inputs directory if not already there"""
@@ -782,6 +806,9 @@ def main():
         if not input_path.exists():
             print(f"Error: Input path '{input_path}' not found")
             sys.exit(1)
+        
+        # Auto-organize files that are directly in inputs/ directory
+        input_path = organize_input_file(input_path)
     
     # Determine if input is file or directory
     if input_path.is_file():

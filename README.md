@@ -86,6 +86,37 @@ streamlit run src/app.py
 - **Summary styles**: General and meeting formats
 - **Output**: TXT, MD, PDF formats
 - **Dual interfaces**: CLI and web app
+- **Auto-organization**: Files automatically organized into dated folders
+
+## File Organization
+
+The system automatically organizes all input files into dated folders for better organization:
+
+- **YouTube downloads**: Saved to `inputs/YYYY-MM-DD/Video_Title-ID.m4a`
+- **Manual file processing**: Files in `inputs/` root are moved to `inputs/YYYY-MM-DD/filename`
+- **Session outputs**: Always saved to `outputs/YYYY-MM-DD/[AM|PM]HH.MM.SS/`
+
+**Example organization behavior:**
+```bash
+# Before processing
+inputs/
+├── my_video.mp4          # File directly in inputs/
+└── 2025-07-27/
+    └── older_file.m4a    # Already organized
+
+# After: python run.py inputs/my_video.mp4
+inputs/
+├── 2025-07-28/
+│   └── my_video.mp4      # Auto-moved to today's folder
+├── 2025-07-27/
+│   └── older_file.m4a    # Unchanged (already organized)
+```
+
+**Benefits:**
+- ✅ Clean organization by date
+- ✅ Easy to find recent files
+- ✅ Consistent with output structure
+- ✅ Non-destructive (only moves root-level files)
 
 ## Examples
 
@@ -100,6 +131,10 @@ python run.py "Audio File.m4a" --summarization-model gpt-4o          # Custom Op
 python run.py "https://www.youtube.com/watch?v=QT6T6AC02-Q"          # Transcribe YouTube video with defaults
 python run.py "https://youtu.be/ABC123" --style meeting              # YouTube with meeting format
 python run.py "https://www.youtube.com/watch?v=XYZ789" --transcription-model large-v3 --format pdf  # High quality YouTube transcription
+
+# File organization examples
+python run.py inputs/my_meeting.m4a                                  # File auto-moved to inputs/2025-07-28/
+python run.py inputs/2025-07-27/old_file.mp4                        # Already organized, no move needed
 
 # Directory batch processing with automatic segment merging
 python run.py inputs/2025-07-15/                                     # Auto-detects and merges segments, then processes all files
