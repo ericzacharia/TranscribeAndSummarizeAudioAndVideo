@@ -192,3 +192,4 @@ package-lock.json
 *.bak
 *.backup
 *~.github_token
+.github_token
