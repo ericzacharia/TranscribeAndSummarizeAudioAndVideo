@@ -25,12 +25,56 @@ from summarize_transcript import summarize_general, summarize_meeting
 from dotenv import load_dotenv
 load_dotenv()
 
-# Get API key from environment variable
-openai_api_key = os.getenv('OPENAI_API_KEY')
-if openai_api_key:
-    client = OpenAI(api_key=openai_api_key)
-else:
-    client = None
+# Initialize OpenAI client (supports both OpenAI and Azure OpenAI)
+def get_azure_openai_credentials():
+    """Check for Azure OpenAI credentials."""
+    api_key = os.getenv('AZURE_OPENAI_API_KEY')
+    endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+    api_version = os.getenv('AZURE_OPENAI_API_VERSION')
+    deployment = os.getenv('AZURE_OPENAI_DEPLOYMENT')
+    
+    if api_key and endpoint and api_version and deployment:
+        return {
+            'api_key': api_key,
+            'endpoint': endpoint,
+            'api_version': api_version,
+            'deployment': deployment
+        }
+    return None
+
+def initialize_openai_client():
+    """Initialize OpenAI client, supporting both regular OpenAI and Azure OpenAI."""
+    try:
+        # First check for Azure OpenAI credentials
+        azure_creds = get_azure_openai_credentials()
+        if azure_creds:
+            from openai import AzureOpenAI
+            client = AzureOpenAI(
+                api_key=azure_creds['api_key'],
+                azure_endpoint=azure_creds['endpoint'],
+                api_version=azure_creds['api_version']
+            )
+            # Store deployment name for later use
+            client._deployment_name = azure_creds['deployment']
+            client._is_azure = True
+            client._provider_name = "Azure OpenAI"
+            return client
+        
+        # Fall back to regular OpenAI
+        openai_api_key = os.getenv('OPENAI_API_KEY')
+        if openai_api_key:
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_api_key)
+            client._is_azure = False
+            client._provider_name = "OpenAI"
+            return client
+            
+    except Exception as e:
+        st.error(f"Error initializing OpenAI client: {e}")
+    return None
+
+# Initialize the client
+client = initialize_openai_client()
 
 # Streamlit page configuration
 st.set_page_config(
@@ -146,14 +190,25 @@ def transcribe_audio(wav_file_path, model_name):
         raise Exception(f"Transcription failed: {str(e)}")
 
 def generate_summary(transcript, style):
-    """Generate summary using OpenAI."""
+    """Generate summary using OpenAI (supports both OpenAI and Azure OpenAI)."""
     if not client:
-        raise Exception("OpenAI API key not configured")
+        raise Exception("OpenAI client not configured. Check your API credentials.")
+    
+    # Use the appropriate model/deployment based on provider
+    use_openai = True
+    model = None
+    
+    if hasattr(client, '_is_azure') and client._is_azure:
+        # For Azure, we don't specify a model here as it's handled in the client
+        model = None
+    else:
+        # For regular OpenAI, use default model
+        model = "gpt-4o-mini"
     
     if style == "meeting":
-        return summarize_meeting(transcript)
+        return summarize_meeting(transcript, use_openai, model)
     else:
-        return summarize_general(transcript)
+        return summarize_general(transcript, use_openai, model)
 
 def generate_download_file(content, file_format, filename_base):
     """Generate downloadable file in specified format."""
@@ -237,10 +292,15 @@ with st.sidebar:
     
     # API key status
     if client:
-        st.success("✅ OpenAI API configured")
+        provider_name = getattr(client, '_provider_name', 'OpenAI')
+        st.success(f"✅ {provider_name} API configured")
+        if hasattr(client, '_is_azure') and client._is_azure:
+            st.info(f"🔷 Using deployment: {client._deployment_name}")
     else:
-        st.error("❌ OpenAI API key not found")
-        st.info("Set OPENAI_API_KEY in your .env file")
+        st.error("❌ No OpenAI API credentials found")
+        st.info("Set either:")
+        st.info("• OPENAI_API_KEY for regular OpenAI, or")
+        st.info("• Azure OpenAI credentials in your .env file")
 
 # Main content area
 col1, col2 = st.columns([1, 1])

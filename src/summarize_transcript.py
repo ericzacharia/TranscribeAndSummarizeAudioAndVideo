@@ -29,13 +29,47 @@ def get_ollama_client():
         return False
     return False
 
+def get_azure_openai_credentials():
+    """Check for Azure OpenAI credentials."""
+    api_key = os.getenv('AZURE_OPENAI_API_KEY')
+    endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+    api_version = os.getenv('AZURE_OPENAI_API_VERSION')
+    deployment = os.getenv('AZURE_OPENAI_DEPLOYMENT')
+    
+    if api_key and endpoint and api_version and deployment:
+        return {
+            'api_key': api_key,
+            'endpoint': endpoint,
+            'api_version': api_version,
+            'deployment': deployment
+        }
+    return None
+
 def get_openai_client():
-    """Initialize OpenAI client if API key is available."""
+    """Initialize OpenAI client, supporting both regular OpenAI and Azure OpenAI."""
     try:
-        from openai import OpenAI
+        # First check for Azure OpenAI credentials
+        azure_creds = get_azure_openai_credentials()
+        if azure_creds:
+            from openai import AzureOpenAI
+            client = AzureOpenAI(
+                api_key=azure_creds['api_key'],
+                azure_endpoint=azure_creds['endpoint'],
+                api_version=azure_creds['api_version']
+            )
+            # Store deployment name for later use
+            client._deployment_name = azure_creds['deployment']
+            client._is_azure = True
+            return client
+        
+        # Fall back to regular OpenAI
         api_key = os.getenv('OPENAI_API_KEY')
         if api_key:
-            return OpenAI(api_key=api_key)
+            from openai import OpenAI
+            client = OpenAI(api_key=api_key)
+            client._is_azure = False
+            return client
+            
     except ImportError:
         pass
     return None
@@ -64,12 +98,22 @@ def call_ollama(prompt, model="llama3.1"):
         raise Exception(f"Failed to call Ollama: {str(e)}")
 
 def call_openai(prompt, system_message, model="gpt-4o-mini"):
-    """Call OpenAI API for text generation."""
+    """Call OpenAI API for text generation (supports both OpenAI and Azure OpenAI)."""
     if not openai_client:
-        raise Exception("OpenAI client not available. Check API key.")
+        azure_creds = get_azure_openai_credentials()
+        if azure_creds:
+            raise Exception("Azure OpenAI credentials found but client initialization failed. Check configuration.")
+        else:
+            raise Exception("OpenAI client not available. Check API key in .env file (OPENAI_API_KEY or Azure OpenAI credentials).")
+    
+    # Use deployment name for Azure, model name for regular OpenAI
+    if hasattr(openai_client, '_is_azure') and openai_client._is_azure:
+        model_or_deployment = openai_client._deployment_name
+    else:
+        model_or_deployment = model
     
     response = openai_client.chat.completions.create(
-        model=model,
+        model=model_or_deployment,
         messages=[
             {"role": "system", "content": system_message},
             {"role": "user", "content": prompt}
@@ -249,7 +293,14 @@ def main():
         sys.exit(1)
     
     if args.provider == "openai" and not openai_client:
-        print("Error: OpenAI API key not found. Please set OPENAI_API_KEY in .env file or use --provider ollama")
+        azure_creds = get_azure_openai_credentials()
+        if azure_creds:
+            print("Error: Azure OpenAI credentials found but client initialization failed. Check your Azure configuration.")
+        else:
+            print("Error: No OpenAI credentials found. Please set either:")
+            print("  - OPENAI_API_KEY for regular OpenAI, or")
+            print("  - Azure OpenAI credentials (AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, etc.) in .env file")
+            print("  - Or use --provider ollama")
         sys.exit(1)
     
     use_openai = args.provider == "openai"
