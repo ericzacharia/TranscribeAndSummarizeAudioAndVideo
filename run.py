@@ -14,6 +14,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 import os
 from datetime import datetime
+import re
+import urllib.parse
 
 # Get the directory where this script is located
 SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -25,11 +27,13 @@ def show_usage():
     """Show detailed usage information"""
     print("TranscribeAndSummarizeAudioAndVideo - Unified transcription and summarization tool")
     print("")
-    print("Usage: python run.py <input_file_or_directory> [OPTIONS]")
+    print("Usage: python run.py <input_file_or_directory_or_youtube_url> [OPTIONS]")
     print("")
-    print("Supported file types:")
-    print("  Audio: .m4a, .wav, .mp3")
-    print("  Video: .mp4, .mov")
+    print("Supported inputs:")
+    print("  Audio files: .m4a, .wav, .mp3")
+    print("  Video files: .mp4, .mov")
+    print("  YouTube URLs: https://youtube.com/watch?v=... or https://youtu.be/...")
+    print("  Directories: Process all audio/video files in a directory")
     print("")
     print("OPTIONS:")
     print("  --transcription-model MODEL    Available: tiny, base, small, medium, medium.en (default), large-v3, large-v3-q5_0")
@@ -44,6 +48,10 @@ def show_usage():
     print("  python run.py inputs/lecture.mp4 --style general --format md     # Custom style and format")
     print("  python run.py inputs/meeting.mp4 --summarization-model llama3.2:3b  # Use local Ollama model")
     print("  python run.py inputs/interview.m4a --transcription-model large-v3    # High quality transcription")
+    print("")
+    print("  # YouTube URL processing")
+    print("  python run.py https://www.youtube.com/watch?v=QT6T6AC02-Q       # Transcribe YouTube video")
+    print("  python run.py https://youtu.be/QT6T6AC02-Q --style meeting       # YouTube with meeting format")
     print("")
     print("  # Directory batch processing")
     print("  python run.py inputs/2025-07-15/                                 # Process all files in directory")
@@ -225,6 +233,96 @@ def create_session_metadata(output_dir, input_file, args, ai_provider, ai_model,
     
     return metadata_file
 
+def is_youtube_url(url):
+    """Check if the input string is a YouTube URL"""
+    youtube_patterns = [
+        r'https?://(www\.)?youtube\.com/watch\?v=[\w-]+',
+        r'https?://(www\.)?youtube\.com/embed/[\w-]+',
+        r'https?://youtu\.be/[\w-]+',
+        r'https?://m\.youtube\.com/watch\?v=[\w-]+',
+        r'https?://youtube\.com/watch\?v=[\w-]+'
+    ]
+    
+    for pattern in youtube_patterns:
+        if re.match(pattern, url):
+            return True
+    return False
+
+def sanitize_filename(filename):
+    """Sanitize filename for safe filesystem storage"""
+    # Remove or replace invalid characters
+    filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
+    filename = re.sub(r'[^\w\s.-]', '_', filename)
+    filename = re.sub(r'\s+', '_', filename)
+    return filename[:100]  # Limit length
+
+def download_youtube_audio(url):
+    """Download YouTube video as audio using yt-dlp"""
+    print(f"🔗 Downloading YouTube audio from: {url}")
+    
+    # Check if yt-dlp is available
+    try:
+        subprocess.run(['yt-dlp', '--version'], capture_output=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("❌ Error: yt-dlp not found. Please install it:")
+        print("   pip install yt-dlp")
+        sys.exit(1)
+    
+    # Create inputs directory if it doesn't exist
+    inputs_dir = SCRIPT_DIR / "inputs"
+    inputs_dir.mkdir(exist_ok=True)
+    
+    # Download audio to inputs directory
+    output_template = str(inputs_dir / "%(title)s-%(id)s.%(ext)s")
+    
+    try:
+        # Download best audio quality
+        cmd = [
+            'yt-dlp',
+            '-f', 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio',
+            '--extract-audio',
+            '--audio-format', 'm4a',
+            '--audio-quality', '0',  # Best quality
+            '-o', output_template,
+            '--restrict-filenames',  # Safe filenames
+            url
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        
+        # Find the downloaded file
+        # yt-dlp outputs the filename in its output
+        output_lines = result.stdout.strip().split('\n')
+        downloaded_file = None
+        
+        for line in output_lines:
+            if 'has already been downloaded' in line or 'Destination:' in line:
+                # Extract filename from output
+                parts = line.split()
+                for part in parts:
+                    if part.startswith(str(inputs_dir)) and (part.endswith('.m4a') or part.endswith('.mp3')):
+                        downloaded_file = Path(part)
+                        break
+        
+        # If we couldn't parse the output, try to find the most recent file
+        if not downloaded_file or not downloaded_file.exists():
+            audio_files = list(inputs_dir.glob('*.m4a')) + list(inputs_dir.glob('*.mp3'))
+            if audio_files:
+                downloaded_file = max(audio_files, key=lambda f: f.stat().st_mtime)
+        
+        if downloaded_file and downloaded_file.exists():
+            print(f"✅ Successfully downloaded: {downloaded_file.name}")
+            return downloaded_file
+        else:
+            print("❌ Error: Could not locate downloaded file")
+            sys.exit(1)
+            
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Error downloading YouTube video: {e}")
+        if e.stderr:
+            print(f"Error details: {e.stderr}")
+        sys.exit(1)
+
 def create_directories():
     """Create necessary base directories"""
     (SCRIPT_DIR / "inputs").mkdir(exist_ok=True)
@@ -402,15 +500,27 @@ def generate_summary(txt_output_path, clean_basename, summary_style, output_form
         sys.exit(1)
 
 def check_openai_api_key():
-    """Check if OpenAI API key is available in .env file"""
+    """Check if OpenAI or Azure OpenAI credentials are available in .env file"""
     env_file = SCRIPT_DIR / ".env"
     if not env_file.exists():
         return False
     
     # Load .env file
     load_dotenv(env_file)
-    api_key = os.getenv('OPENAI_API_KEY')
     
+    # Check for Azure OpenAI credentials first
+    azure_api_key = os.getenv('AZURE_OPENAI_API_KEY')
+    azure_endpoint = os.getenv('AZURE_OPENAI_ENDPOINT')
+    azure_api_version = os.getenv('AZURE_OPENAI_API_VERSION')
+    azure_deployment = os.getenv('AZURE_OPENAI_DEPLOYMENT')
+    
+    if (azure_api_key and azure_endpoint and azure_api_version and azure_deployment and
+        azure_api_key.strip() != '' and azure_endpoint.strip() != '' and 
+        azure_api_version.strip() != '' and azure_deployment.strip() != ''):
+        return True
+    
+    # Fall back to regular OpenAI
+    api_key = os.getenv('OPENAI_API_KEY')
     return api_key is not None and api_key.strip() != ''
 
 def check_ollama_available():
@@ -496,10 +606,20 @@ def determine_ai_provider(model_name=None):
         
         if provider == "openai":
             if check_openai_api_key():
-                print(f"✅ Using OpenAI with model: {model}")
+                # Check which provider is actually available
+                load_dotenv(SCRIPT_DIR / ".env")
+                azure_creds = (os.getenv('AZURE_OPENAI_API_KEY') and 
+                              os.getenv('AZURE_OPENAI_ENDPOINT') and 
+                              os.getenv('AZURE_OPENAI_API_VERSION') and 
+                              os.getenv('AZURE_OPENAI_DEPLOYMENT'))
+                
+                if azure_creds:
+                    print(f"✅ Using Azure OpenAI with deployment for model: {model}")
+                else:
+                    print(f"✅ Using OpenAI with model: {model}")
                 return provider, model
             else:
-                print("⚠️  OpenAI API key not found in .env file")
+                print("⚠️  No OpenAI or Azure OpenAI credentials found in .env file")
                 print(f"   Cannot use OpenAI model: {model}")
                 print("   Falling back to local Ollama...")
                 # Fallback to default Ollama model
@@ -513,10 +633,20 @@ def determine_ai_provider(model_name=None):
     
     # No model specified, try default OpenAI first
     if check_openai_api_key():
-        print("✅ Using OpenAI with default model: gpt-4o")
+        # Check which provider is actually available
+        load_dotenv(SCRIPT_DIR / ".env")
+        azure_creds = (os.getenv('AZURE_OPENAI_API_KEY') and 
+                      os.getenv('AZURE_OPENAI_ENDPOINT') and 
+                      os.getenv('AZURE_OPENAI_API_VERSION') and 
+                      os.getenv('AZURE_OPENAI_DEPLOYMENT'))
+        
+        if azure_creds:
+            print("✅ Using Azure OpenAI with default deployment")
+        else:
+            print("✅ Using OpenAI with default model: gpt-4o")
         return "openai", "gpt-4o"
     
-    print("⚠️  OpenAI API key not found in .env file")
+    print("⚠️  No OpenAI or Azure OpenAI credentials found in .env file")
     print("   Falling back to local Ollama...")
     
     # Fallback to Ollama with default small model
@@ -640,11 +770,18 @@ def main():
         show_usage()
         sys.exit(0 if args.help else 1)
     
-    # Validate input path exists
-    input_path = Path(args.input_file)
-    if not input_path.exists():
-        print(f"Error: Input path '{input_path}' not found")
-        sys.exit(1)
+    # Check if input is a YouTube URL first
+    if is_youtube_url(args.input_file):
+        print(f"\n🔗 Detected YouTube URL: {args.input_file}")
+        # Download the YouTube video as audio
+        downloaded_file = download_youtube_audio(args.input_file)
+        input_path = downloaded_file
+    else:
+        # Validate input path exists
+        input_path = Path(args.input_file)
+        if not input_path.exists():
+            print(f"Error: Input path '{input_path}' not found")
+            sys.exit(1)
     
     # Determine if input is file or directory
     if input_path.is_file():

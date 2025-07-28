@@ -54,6 +54,10 @@ python run.py input.m4a --summarization-model llama3.2:3b
 python run.py input_file.m4a
 python run.py input_video.mp4
 
+# YouTube URL processing
+python run.py "https://www.youtube.com/watch?v=VIDEO_ID"
+python run.py "https://youtu.be/VIDEO_ID" --style meeting --format pdf
+
 # Directory batch processing (process all audio/video files)
 python run.py inputs/2025-07-15/
 python run.py inputs/ --style meeting --format pdf
@@ -76,7 +80,7 @@ streamlit run src/app.py
 
 ## Features
 
-- **Formats**: M4A, MP4, MOV, WAV files
+- **Input formats**: M4A, MP4, MOV, WAV files + **YouTube URLs**
 - **Transcription**: Local Whisper.cpp (tiny to large models)
 - **Summarization**: OpenAI GPT (default) or local Ollama/Llama models
 - **Summary styles**: General and meeting formats
@@ -91,6 +95,11 @@ python run.py "Meeting Notes.m4a"                                    # iPhone vo
 python run.py "Team_Meeting.mp4" --style meeting                     # Zoom recording with meeting format
 python run.py "Lecture.mp4" --transcription-model large-v3           # High quality transcription
 python run.py "Audio File.m4a" --summarization-model gpt-4o          # Custom OpenAI model
+
+# YouTube URL processing
+python run.py "https://www.youtube.com/watch?v=QT6T6AC02-Q"          # Transcribe YouTube video with defaults
+python run.py "https://youtu.be/ABC123" --style meeting              # YouTube with meeting format
+python run.py "https://www.youtube.com/watch?v=XYZ789" --transcription-model large-v3 --format pdf  # High quality YouTube transcription
 
 # Directory batch processing with automatic segment merging
 python run.py inputs/2025-07-15/                                     # Auto-detects and merges segments, then processes all files
@@ -164,6 +173,8 @@ python src/merge_media.py inputs/2025-07-15/ --dry-run
 - **"Ollama not available"**: Start Ollama with `ollama serve &` before running with `--summarization-model llama3.2:3b`
 - **"whisper.cpp not found"**: Run `python setup/setup.py` or manually build whisper.cpp
 - **"No module named 'pydub'"**: Install dependencies with `pip install --user --break-system-packages -r setup/requirements.txt`
+- **"yt-dlp not found"**: Install yt-dlp with `pip install --user --break-system-packages yt-dlp`
+- **YouTube download fails**: Check internet connection and video availability
 - **FFmpeg errors**: Install FFmpeg with `sudo apt install ffmpeg`
 - **Large files timeout**: Use smaller transcription models (`--transcription-model tiny`) for faster processing
 - **Memory issues**: Close other applications or use smaller models
