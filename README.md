@@ -1,6 +1,6 @@
 # 🎵 TranscribeAndSummarizeAudioAndVideo
 
-A tool that automatically transcribes and summarizes audio/video files using local Whisper.cpp for transcription and OpenAI GPT (default) or local Ollama/Llama models for summarization.
+An intelligent tool that automatically transcribes and summarizes audio/video files using local Whisper.cpp for transcription and AI-powered multi-category analysis for summarization. Features smart content classification that adapts summaries based on content type (meetings, learning content, technical discussions, etc.).
 
 ## 🚀 Quick Start
 
@@ -62,15 +62,27 @@ python run.py "https://youtu.be/VIDEO_ID" --style meeting --format pdf
 python run.py inputs/2025-07-15/
 python run.py inputs/ --style meeting --format pdf
 
-# Custom summary styles and formats
-python run.py input_video.mp4 --style meeting --format md
+# Smart multi-category analysis (default)
+python run.py input_video.mp4                                    # Intelligent classification & tailored summaries
+python run.py input_file.m4a --show-classification               # Show confidence scores for each category
+
+# Interactive mode for uncertain classifications
+python run.py input_meeting.m4a --interactive                    # Get prompted when classification is uncertain
+
+# Provide context hints for domain-specific terms
+python run.py input_technical.m4a --context-hints "entities=data_objects,opsec=security,ui=interface"
+
+# Traditional summary styles
+python run.py input_video.mp4 --style meeting --format md        # Classic meeting format
+python run.py input_video.mp4 --style general --format pdf       # Classic general format
 
 # Use local Ollama instead of OpenAI
 python run.py input_file.m4a --summarization-model llama3.2:1b
 
 # Options: --transcription-model [tiny|base|small|medium|medium.en|large-v3], 
 #          --summarization-model [gpt-4o|gpt-4o-mini|llama3.2:1b|llama3.2:3b|llama3.1:8b], 
-#          --style [general|meeting], --format [txt|md|pdf]
+#          --style [smart|general|meeting], --format [txt|md|pdf|json]
+#          --confidence-threshold [0.0-1.0], --interactive, --context-hints
 ```
 
 ### Streamlit Web App
@@ -80,13 +92,27 @@ streamlit run src/app.py
 
 ## Features
 
+### 🧠 **Intelligent Content Classification**
+- **Smart Analysis**: Automatically detects content type (technical meetings, learning content, status updates, etc.)
+- **Multi-Category Summaries**: Generates tailored summaries for multiple detected categories
+- **Confidence Scoring**: Shows classification confidence with adjustable thresholds
+- **12 Content Categories**: Professional (technical meetings, project planning, research, etc.) + Personal (reflection, life planning, social, learning)
+
+### 🎯 **Adaptive Summarization**
+- **Category-Specific Templates**: Each content type gets optimized summary structure
+- **Unified Action Dashboard**: Consolidates action items across all categories
+- **Work-Ready Outputs**: JIRA tickets, technical documentation, learning plans, etc.
+- **Interactive Mode**: User input for uncertain classifications
+- **Context Hints**: Provide meaning for domain-specific terminology
+
+### 📁 **Core Functionality**
 - **Input formats**: M4A, MP4, MOV, WAV files + **YouTube URLs**
 - **Transcription**: Local Whisper.cpp (tiny to large models)
-- **Summarization**: OpenAI GPT (default) or local Ollama/Llama models
-- **Summary styles**: General and meeting formats
-- **Output**: TXT, MD, PDF formats
+- **AI Options**: OpenAI GPT (default) or local Ollama/Llama models
+- **Output formats**: TXT, MD, PDF, JSON
 - **Dual interfaces**: CLI and web app
 - **Auto-organization**: Files automatically organized into dated folders
+- **Segment Detection**: Automatic merging of multi-part recordings
 
 ## File Organization
 
@@ -121,25 +147,30 @@ inputs/
 ## Examples
 
 ```bash
-# Single file processing
-python run.py "Meeting Notes.m4a"                                    # iPhone voice memo with defaults
-python run.py "Team_Meeting.mp4" --style meeting                     # Zoom recording with meeting format
-python run.py "Lecture.mp4" --transcription-model large-v3           # High quality transcription
-python run.py "Audio File.m4a" --summarization-model gpt-4o          # Custom OpenAI model
+# Smart Analysis (New Default)
+python run.py "Meeting Notes.m4a"                                    # Intelligent multi-category analysis
+python run.py "Team_Meeting.mp4" --show-classification               # Show what categories were detected
+python run.py "Technical_Discussion.m4a" --interactive               # Interactive mode for uncertain content
+
+# Context-Aware Processing
+python run.py "OPSEC_Meeting.m4a" --context-hints "entities=data_objects,opsec=security_analysis"
+python run.py "Code_Review.mp4" --context-hints "api=interface,nlp=language_processing" --format json
+
+# Traditional Styles (Still Available)
+python run.py "Lecture.mp4" --style general --transcription-model large-v3   # Classic general format
+python run.py "Team_Meeting.mp4" --style meeting --format pdf               # Classic meeting format
 
 # YouTube URL processing
-python run.py "https://www.youtube.com/watch?v=QT6T6AC02-Q"          # Transcribe YouTube video with defaults
-python run.py "https://youtu.be/ABC123" --style meeting              # YouTube with meeting format
-python run.py "https://www.youtube.com/watch?v=XYZ789" --transcription-model large-v3 --format pdf  # High quality YouTube transcription
+python run.py "https://www.youtube.com/watch?v=QT6T6AC02-Q"          # Smart analysis of YouTube content
+python run.py "https://youtu.be/ABC123" --interactive                # Interactive YouTube processing
 
-# File organization examples
-python run.py inputs/my_meeting.m4a                                  # File auto-moved to inputs/2025-07-28/
-python run.py inputs/2025-07-27/old_file.mp4                        # Already organized, no move needed
+# Advanced Configuration
+python run.py "Workshop.mp4" --confidence-threshold 0.3 --show-classification  # Lower threshold, show all scores
+python run.py "Research_Call.m4a" --summarization-model gpt-4o --format json   # Structured JSON output
 
-# Directory batch processing with automatic segment merging
-python run.py inputs/2025-07-15/                                     # Auto-detects and merges segments, then processes all files
-python run.py recordings/ --style meeting --format pdf               # Meeting transcripts as PDFs with automatic merging
-python run.py interviews/ --transcription-model large-v3 --format md # High quality batch processing with smart segment handling
+# Directory batch processing with smart analysis
+python run.py inputs/2025-07-15/                                     # Smart analysis for all files
+python run.py recordings/ --interactive --format md                  # Interactive batch processing
 ```
 
 ## Intelligent Segment Detection and Merging
@@ -213,6 +244,12 @@ python src/merge_media.py inputs/2025-07-15/ --dry-run
 - **FFmpeg errors**: Install FFmpeg with `sudo apt install ffmpeg`
 - **Large files timeout**: Use smaller transcription models (`--transcription-model tiny`) for faster processing
 - **Memory issues**: Close other applications or use smaller models
+
+### Smart Analysis Specific
+- **Wrong category detected**: Use `--interactive` mode to correct and teach the system
+- **Technical terms misunderstood**: Use `--context-hints` to provide domain-specific meanings
+- **Low confidence scores**: Try lowering `--confidence-threshold` or using `--interactive` mode
+- **Multiple categories needed**: The system automatically generates summaries for all categories above threshold
 
 ### WSL/Linux Specific
 - **Systemd warnings**: Normal in WSL, Ollama still works with manual start

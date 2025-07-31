@@ -38,8 +38,12 @@ def show_usage():
     print("OPTIONS:")
     print("  --transcription-model MODEL    Available: tiny, base, small, medium, medium.en (default), large-v3, large-v3-q5_0")
     print("  --summarization-model MODEL    Available: gpt-4o (default), gpt-4o-mini, llama3.2:1b, llama3.2:3b, llama3.1:8b, llama3.1:70b")
-    print("  --style STYLE                  Summary style: general (default), meeting")
-    print("  --format FORMAT                Output format: md (default), txt, pdf")
+    print("  --style STYLE                  Summary style: smart (intelligent multi-category, default), general, meeting")
+    print("  --format FORMAT                Output format: md (default), txt, pdf, json")
+    print("  --confidence-threshold FLOAT   Minimum confidence for category inclusion (default: 0.5)")
+    print("  --show-classification          Display content classification results")
+    print("  --interactive                  Ask for user input when classification is uncertain")
+    print("  --context-hints HINTS          Provide context hints for ambiguous terms (format: term1=meaning1,term2=meaning2)")
     print("  --help, -h                     Show this help message")
     print("")
     print("Examples:")
@@ -47,7 +51,9 @@ def show_usage():
     print("  python run.py inputs/voice_memo.m4a                              # Default: medium.en + gpt-4o")
     print("  python run.py inputs/lecture.mp4 --style general --format md     # Custom style and format")
     print("  python run.py inputs/meeting.mp4 --summarization-model llama3.2:3b  # Use local Ollama model")
-    print("  python run.py inputs/interview.m4a --transcription-model large-v3    # High quality transcription")
+    print("  python run.py inputs/interview.m4a --transcription-model large-v3    # High quality transcription
+  python run.py inputs/meeting.m4a --interactive                       # Interactive smart analysis
+  python run.py inputs/technical.m4a --context-hints "entities=data_objects,opsec=security"  # Context hints")
     print("")
     print("  # YouTube URL processing")
     print("  python run.py https://www.youtube.com/watch?v=QT6T6AC02-Q       # Transcribe YouTube video")
@@ -77,7 +83,7 @@ def validate_file_extension(filename):
 
 def validate_summary_style(style):
     """Validate summary style"""
-    valid_styles = ['general', 'meeting']
+    valid_styles = ['general', 'meeting', 'smart']
     if style not in valid_styles:
         print(f"Error: Invalid summary style: {style}")
         print(f"Supported styles: {', '.join(valid_styles)}")
@@ -85,7 +91,7 @@ def validate_summary_style(style):
 
 def validate_output_format(format_type):
     """Validate output format"""
-    valid_formats = ['txt', 'md', 'pdf']
+    valid_formats = ['txt', 'md', 'pdf', 'json']
     if format_type not in valid_formats:
         print(f"Error: Invalid output format: {format_type}")
         print(f"Supported formats: {', '.join(valid_formats)}")
@@ -489,15 +495,24 @@ def transcribe_audio(wav_file_path, whisper_path, model_name, basename, output_d
     
     return txt_output_path, clean_basename
 
-def generate_summary(txt_output_path, clean_basename, summary_style, output_format, ai_provider, ai_model, output_dir):
+def generate_summary(txt_output_path, clean_basename, summary_style, output_format, ai_provider, ai_model, output_dir, confidence_threshold=0.5, show_classification=False, interactive=False, context_hints=None):
     """Generate AI summary of the transcript"""
-    print(f"\n🤖 Generating {summary_style} summary...")
+    if summary_style == "smart":
+        print(f"\n🧠 Generating intelligent multi-category analysis...")
+    else:
+        print(f"\n🤖 Generating {summary_style} summary...")
     
     # Determine output file extension and path
-    if output_format == "txt":
-        summary_output_path = output_dir / f"{clean_basename}_summary.txt"
+    if summary_style == "smart":
+        if output_format == "txt":
+            summary_output_path = output_dir / f"{clean_basename}_smart_summary.txt"
+        else:
+            summary_output_path = output_dir / f"{clean_basename}_smart_summary.{output_format}"
     else:
-        summary_output_path = output_dir / f"{clean_basename}_summary.{output_format}"
+        if output_format == "txt":
+            summary_output_path = output_dir / f"{clean_basename}_summary.txt"
+        else:
+            summary_output_path = output_dir / f"{clean_basename}_summary.{output_format}"
     
     # Build summarization command
     cmd = [
@@ -513,9 +528,21 @@ def generate_summary(txt_output_path, clean_basename, summary_style, output_form
     if ai_model:
         cmd.extend(["--model", ai_model])
     
+    if summary_style == "smart":
+        cmd.extend(["--confidence-threshold", str(confidence_threshold)])
+        if show_classification:
+            cmd.append("--show-classification")
+        if interactive:
+            cmd.append("--interactive")
+        if context_hints:
+            cmd.extend(["--context-hints", context_hints])
+    
     try:
         subprocess.run(cmd, check=True)
-        print("✅ Summary completed!")
+        if summary_style == "smart":
+            print("✅ Multi-category analysis completed!")
+        else:
+            print("✅ Summary completed!")
         relative_path = summary_output_path.relative_to(SCRIPT_DIR)
         print(f"📋 Summary saved to: {relative_path}")
         return summary_output_path
@@ -703,7 +730,8 @@ def process_single_file(input_file, args, whisper_path, ai_provider, ai_model):
     txt_output_path, clean_basename = transcribe_audio(wav_file_path, whisper_path, args.transcription_model, input_basename, output_dir)
     
     # Step 3: Generate summary
-    generate_summary(txt_output_path, clean_basename, args.style, args.format, ai_provider, ai_model, output_dir)
+    generate_summary(txt_output_path, clean_basename, args.style, args.format, ai_provider, ai_model, output_dir, 
+                    args.confidence_threshold, args.show_classification, args.interactive, args.context_hints)
     
     # Create session metadata file
     metadata_file = create_session_metadata(output_dir, input_file, args, ai_provider, ai_model, processing_start_time)
@@ -783,8 +811,12 @@ def main():
     parser.add_argument('input_file', nargs='?', help='Input audio/video file or directory')
     parser.add_argument('--transcription-model', default='medium.en', help='Whisper model for transcription (default: medium.en)')
     parser.add_argument('--summarization-model', default='', help='AI model for summarization (default: gpt-4o-mini)')
-    parser.add_argument('--style', default='general', help='Summary style: general, meeting (default: general)')
-    parser.add_argument('--format', default='md', help='Output format: md, txt, pdf (default: md)')
+    parser.add_argument('--style', default='smart', help='Summary style: smart, general, meeting (default: smart)')
+    parser.add_argument('--format', default='md', help='Output format: md, txt, pdf, json (default: md)')
+    parser.add_argument('--confidence-threshold', type=float, default=0.5, help='Confidence threshold for smart analysis (default: 0.5)')
+    parser.add_argument('--show-classification', action='store_true', help='Show classification results for smart analysis')
+    parser.add_argument('--interactive', action='store_true', help='Enable interactive mode for uncertain classifications')
+    parser.add_argument('--context-hints', help='Provide context hints for ambiguous terms (format: term1=meaning1,term2=meaning2)')
     parser.add_argument('--help', '-h', action='store_true', help='Show this help message')
     
     args = parser.parse_args()
